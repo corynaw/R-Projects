@@ -1,0 +1,134 @@
+# In the final weeks of my Data Analytics course with Google, I was tasked with completing a case study. 
+
+# Scenario
+ I am a junior data analyst at Cyclistic. The director of marketing believes the company's success depends on maximzing the number of annual memberships.
+
+# Goal
+  Analyze Cyclistic's historical bike trip data to identify any trends that might help the marketing team create new tactics to convert casual riders to annual members.
+
+# For this case study, I am using Divvy's public data set. I combined their 2019 quarter 1 data and their 2020 quarter 1 data. To clean the data and get an idea of visualizations, I decided to use R. Not only could it handle the large data set, but it could also create the visualizations i'd need in the end. 
+
+/* To begin, I installed the necessary packages needed to manipulate the data and create my visualiztions. */
+install.packages("tidyverse")
+library(tidyverse)
+library(conflicted)
+
+conflict_prefer("filter", "dplyr")
+conflict_prefer("lag", "dplyr")
+
+q1_2019 <- read_csv("Divvy_Trips_2019_Q1.csv")
+q1_2020 <- read_csv("Divvy_Trips_2020_Q1.csv")
+
+# Rename columns to make them consistent with q1_2020 (as this will be the supposed going-forward table design)
+(q1_2019 <- rename(q1_2019 ,ride_id = trip_id
+                   ,rideable_type = bikeid
+                   ,started_at = start_time
+                   ,ended_at = end_time 
+                   ,start_station_name = from_station_name 
+                   ,start_station_id = from_station_id 
+                   ,end_station_name = to_station_name 
+                   ,end_station_id = to_station_id 
+                   ,member_casual = usertype
+))
+
+# Inspect the dataframes and look for incongruencies
+str(q1_2019)
+str(q1_2020)
+
+# Converting ride_id and rideable_type to character so that they stack correctly
+q1_2019 <- mutate(q1_2019, ride_id = as.character(ride_id)
+                  ,rideable_type = as.character(rideable_type))
+
+# Stack individual quarter's data frames into one big data frame
+all_trips <- bind_rows(q1_2019, q1_2020)
+
+# Remove lat, long, birthyear, and gender fields as this data was dropped beginning in 2020
+all_trips <- all_trips %>%
+  select(-c(start_lat, start_lng, end_lat, end_lng, birthyear, gender, "tripduration"))
+
+# Inspect the new table that has been created
+colnames(all_trips)
+nrow(all_trips)
+dim(all_trips)
+head(all_trips)
+str(all_trips)
+summary(all_trips)
+
+# In the "member_casual" column, replace "Subscriber" with "member" and "Customer" with "casual"
+all_trips <- all_trips %>%
+  mutate(member_casual = recode(member_casual 
+                                ,"Subscriber" = "member"
+                                ,"Customer" = "casual"))
+
+# Add columns that list the date, month, day, and year of each ride
+# This will allow us to aggregate ride data for each month, day, or year
+all_trips$date <- as.Date(all_trips$started_at) 
+all_trips$month <- format(as.Date(all_trips$date), "%m")
+all_trips$day <- format(as.Date(all_trips$date), "%d")
+all_trips$year <- format(as.Date(all_trips$date), "%Y")
+all_trips$dayof_week <- format(as.Date(all_trips$date), "%A")
+
+# Add a "ride_length" calculation to all_trips (in seconds)
+all_trips$ride_length <- difftime(all_trips$ended_at,all_trips$started_at)
+
+# Convert "ride_length" from Factor to numeric so we can run calculations on the data 
+is.factor(all_trips$ride_length)
+all_trips$ride_length <- as.numeric(as.character(all_trips$ride_length)) 
+is.numeric(all_trips$ride_length)
+
+# The dataframe includes a few hundred entries when bikes were taken out of docks and checked for quality or ride_length was negative
+# Create a new version of the dataframe (v2) since data is being removed
+all_trips_v2 <- all_trips[!(all_trips$start_station_name == "HQ QR" | all_trips$ride_length<0),]
+
+# Descriptive analysis on ride_length (all figures in seconds)
+mean(all_trips_v2$ride_length)
+median(all_trips_v2$ride_length)
+max(all_trips_v2$ride_length)
+min(all_trips_v2$ride_length)
+
+summary(all_trips_v2$ride_length)
+
+# Compare members and casual users
+aggregate(all_trips_v2$ride_length ~ all_trips_v2$member_casual, FUN = mean) 
+aggregate(all_trips_v2$ride_length ~ all_trips_v2$member_casual, FUN = median) 
+aggregate(all_trips_v2$ride_length ~ all_trips_v2$member_casual, FUN = max) 
+aggregate(all_trips_v2$ride_length ~ all_trips_v2$member_casual, FUN = min)
+
+# Average ride time by each day for members vs casual users 
+aggregate(all_trips_v2$ride_length ~ all_trips_v2$member_casual + all_trips_v2$dayof_week, FUN = mean)
+
+# Aggregating the data so that the weeks are in order 
+all_trips_v2$dayof_week <- ordered(all_trips_v2$dayof_week, levels=c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"))
+
+# Average ride time each day for members vs casual users
+aggregate(all_trips_v2$ride_length ~ all_trips_v2$member_casual + all_trips_v2$dayof_week, FUN = mean)
+
+# Analyze ridership data by type and weekday
+all_trips_v2 %>%
+  mutate(weekday = wday(started_at, label = TRUE)) %>%
+  group_by(member_casual, weekday) %>% 
+  summarise(number_of_rides = n()
+            ,average_duration = mean(ride_length)) %>%
+  arrange(member_casual, weekday)
+
+# Visualization of the number of rides by rider type
+all_trips_v2 %>%
+  mutate(weekday = wday(started_at, label = TRUE)) %>% 
+  group_by(member_casual, weekday) %>%
+  summarise(number_of_rides = n() 
+            ,average_duration = mean(ride_length)) %>%
+  arrange(member_casual, weekday) %>%
+  ggplot(aes(x = weekday, y = number_of_rides, fill = member_casual)) + geom_col(position = "dodge")
+
+# Visualization of the average duration
+all_trips_v2 %>%
+  mutate(weekday = wday(started_at, label = TRUE)) %>% 
+  group_by(member_casual, weekday) %>% 
+  summarise(number_of_rides = n()
+            ,average_duration = mean(ride_length)) %>% 
+  arrange(member_casual, weekday) %>%
+  ggplot(aes(x = weekday, y = average_duration, fill = member_casual)) + geom_col(position = "dodge")
+  
+# Create a csv file that I can use in other visualization tools.
+counts <- aggregate(all_trips_v2$ride_length ~ all_trips_v2$member_casual + all_trips_v2$dayof_week, FUN = mean)
+write.csv(counts, file = 'avg_ride_length.csv')
